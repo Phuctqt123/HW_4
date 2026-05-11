@@ -1,0 +1,152 @@
+You are a senior AI engineer specializing in Reinforcement Learning and Deep Q-Networks (DQN).
+
+Help me build a complete Deep Q-Learning project where an AI learns to play the game Tetris from scratch.
+
+PROJECT GOAL:
+Create a full Deep Reinforcement Learning system using Deep Q-Network (DQN) to train an AI agent that can intelligently play Tetris and improve over time.
+
+TECH STACK:
+
+* Python 3.10+
+* PyTorch
+* NumPy
+* Matplotlib
+* OpenAI Gym style environment
+* Pygame for visualization
+
+PROJECT REQUIREMENTS:
+
+1. GAME ENVIRONMENT
+   Build a fully functional Tetris environment including:
+
+* 10x20 board
+* Tetromino pieces
+* Rotation system
+* Collision detection
+* Line clearing
+* Score calculation
+* Game over detection
+* Real-time rendering with Pygame
+
+2. REINFORCEMENT LEARNING DESIGN
+
+STATE REPRESENTATION:
+The AI should learn from features such as:
+
+* Column heights
+* Number of holes
+* Board bumpiness
+* Aggregate height
+* Completed lines
+* Current piece information
+
+ACTIONS:
+
+* Move left
+* Move right
+* Rotate piece
+* Drop piece
+* Hold piece (optional)
+
+REWARD FUNCTION:
+Design a smart reward system:
+
+* Positive reward for clearing lines
+* Small reward for survival
+* Penalty for holes
+* Penalty for uneven board
+* Large negative reward for game over
+
+3. DEEP Q-NETWORK
+   Implement a Deep Q-Learning model using PyTorch:
+
+* Input layer from board features
+* Hidden fully connected layers
+* Output Q-values for actions
+* ReLU activation
+* Experience replay buffer
+* Target network
+* Epsilon-greedy exploration
+
+4. TRAINING SYSTEM
+   Create a full training pipeline:
+
+* Episode-based training
+* Batch learning
+* Replay memory sampling
+* Model checkpoint saving
+* Reward tracking
+* Loss tracking
+* Epsilon decay
+* GPU support if available
+
+5. VISUALIZATION & ANALYTICS
+   Include:
+
+* Live gameplay visualization
+* Training graphs
+* Reward vs episode chart
+* Loss curve
+* Average score tracking
+* AI decision visualization
+
+6. PROJECT STRUCTURE
+   Organize the project cleanly:
+
+* environment/
+* models/
+* training/
+* utils/
+* visualization/
+* checkpoints/
+
+7. REPORT & THEORY
+   Generate explanations for:
+
+* What is Reinforcement Learning
+* What is Q-Learning
+* Difference between Q-Learning and Deep Q-Learning
+* Bellman Equation
+* Experience Replay
+* Target Network
+* Exploration vs Exploitation
+* Why DQN works for Tetris
+
+8. MATHEMATICAL BACKGROUND
+   Include formulas and explanations for:
+
+* Q-value update
+* Bellman equation
+* Loss function
+* Epsilon-greedy policy
+* Neural network optimization
+
+9. EXTRA FEATURES
+   Optional advanced improvements:
+
+* Double DQN
+* Dueling DQN
+* Prioritized Experience Replay
+* CNN-based board processing
+* Human vs AI mode
+* AI autoplay speed control
+
+10. OUTPUT REQUIREMENTS
+    Generate:
+
+* Complete Python source code
+* Modular architecture
+* Training scripts
+* Evaluation scripts
+* Graph visualization
+* README.md
+* Well-commented code
+* Clean explanations for beginners
+
+The final project should:
+
+* Successfully train an AI to play Tetris
+* Show learning improvement over time
+* Be visually demonstrable for university presentation
+* Be suitable for an Introduction to Artificial Intelligence course project
+* Look professional and academically strong
