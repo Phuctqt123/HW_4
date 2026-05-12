@@ -38,11 +38,15 @@ def evaluate(args: argparse.Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     checkpoint = torch.load(args.model, map_location=device) if Path(args.model).exists() else None
     action_size = _checkpoint_action_size(checkpoint) if checkpoint is not None else None
-    use_hold = action_size == 5 if action_size is not None else args.use_hold
+    action_mode = checkpoint.get("action_mode", args.action_mode) if isinstance(checkpoint, dict) else args.action_mode
+    use_hold = bool(checkpoint.get("use_hold", args.use_hold)) if isinstance(checkpoint, dict) else args.use_hold
+    if checkpoint is not None and "action_mode" not in checkpoint and action_size is not None:
+        action_mode = "primitive"
+        use_hold = action_size == 5
     if checkpoint is not None and args.use_hold != use_hold:
         print(f"Checkpoint uses {action_size} actions, so evaluation use_hold={use_hold}.")
 
-    env = TetrisEnv(use_hold=use_hold)
+    env = TetrisEnv(use_hold=use_hold, action_mode=action_mode)
     model = load_model(checkpoint, env, device) if checkpoint is not None else None
 
     cell_size = args.cell_size
@@ -67,8 +71,10 @@ def evaluate(args: argparse.Namespace) -> None:
             else:
                 with torch.no_grad():
                     state_t = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
-                    q_values = model(state_t)
-                    action = int(q_values.argmax(dim=1).item())
+                    q_values = model(state_t).squeeze(0)
+                    valid_mask = torch.tensor(env.valid_action_mask(), dtype=torch.bool, device=device)
+                    q_values = q_values.masked_fill(~valid_mask, -1e9)
+                    action = int(q_values.argmax(dim=0).item())
             state, _, _, info = env.step(action)
         else:
             info = {"score": env.score, "lines": env.lines_cleared, "holes": 0, "bumpiness": 0}
@@ -86,7 +92,8 @@ def evaluate(args: argparse.Namespace) -> None:
             f"Piece: {env.current_piece.name}",
             f"Next: {env.next_piece_name}",
             f"Hold: {env.hold_piece_name or '-'}",
-            f"Action: {env.action_names[action] if not env.done else '-'}",
+            f"Mode: {env.action_mode}",
+            f"Action: {env.describe_action(action) if not env.done else '-'}",
             "",
             "Press R to reset",
         ]
@@ -110,6 +117,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cell-size", type=int, default=30)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--use-hold", action="store_true")
+    parser.add_argument("--action-mode", choices=["primitive", "placement"], default="primitive")
     return parser.parse_args()
 
 

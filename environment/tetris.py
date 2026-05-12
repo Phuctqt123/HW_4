@@ -75,18 +75,22 @@ class TetrisEnv:
     """OpenAI Gym style Tetris environment with feature observations."""
 
     metadata = {"render_modes": ["human", "rgb_array"]}
-    action_names = ["left", "right", "rotate", "drop", "hold"]
+    primitive_action_names = ["left", "right", "rotate", "drop", "hold"]
 
     def __init__(
         self,
         width: int = BOARD_WIDTH,
         height: int = BOARD_HEIGHT,
         use_hold: bool = True,
+        action_mode: str = "primitive",
         seed: Optional[int] = None,
     ) -> None:
+        if action_mode not in {"primitive", "placement"}:
+            raise ValueError("action_mode must be 'primitive' or 'placement'")
         self.width = width
         self.height = height
         self.use_hold = use_hold
+        self.action_mode = action_mode
         self.random = random.Random(seed)
         self.board = np.zeros((self.height, self.width), dtype=np.uint8)
         self.current_piece: Piece = self._new_piece()
@@ -100,7 +104,9 @@ class TetrisEnv:
 
     @property
     def action_space_n(self) -> int:
-        return len(self.action_names) if self.use_hold else 4
+        if self.action_mode == "placement":
+            return self.width * 4 + int(self.use_hold)
+        return len(self.primitive_action_names) if self.use_hold else 4
 
     @property
     def observation_space_shape(self) -> Tuple[int]:
@@ -109,8 +115,9 @@ class TetrisEnv:
     @property
     def state_size(self) -> int:
         # 10 heights + aggregate height + holes + bumpiness + completed lines
-        # + current piece one-hot + normalized x/y/rotation.
-        return self.width + 4 + len(TETROMINOES) + 3
+        # + current piece one-hot + next piece one-hot + hold piece one-hot/empty
+        # + normalized x/y/rotation + can-hold flag.
+        return self.width + 4 + len(TETROMINOES) * 2 + (len(TETROMINOES) + 1) + 4
 
     def reset(self) -> np.ndarray:
         self.board.fill(0)
@@ -133,18 +140,26 @@ class TetrisEnv:
         reward = 0.05
         cleared = 0
 
-        if action == 0:
-            self._try_move(-1, 0)
-        elif action == 1:
-            self._try_move(1, 0)
-        elif action == 2:
-            self._try_rotate()
-        elif action == 3:
-            cleared = self._hard_drop()
-        elif action == 4 and self.use_hold:
-            self._hold()
+        if self.action_mode == "placement":
+            cleared, invalid = self._step_placement(action)
+            if invalid:
+                reward -= 1.0
+        else:
+            if action == 0:
+                self._try_move(-1, 0)
+            elif action == 1:
+                self._try_move(1, 0)
+            elif action == 2:
+                self._try_rotate()
+            elif action == 3:
+                cleared = self._hard_drop()
+            elif action == 4 and self.use_hold:
+                if self.can_hold:
+                    self._hold()
+                else:
+                    reward -= 0.2
 
-        if action != 3 and not self.done:
+        if self.action_mode == "primitive" and action != 3 and not self.done:
             if not self._try_move(0, 1):
                 cleared = self._lock_piece()
 
@@ -163,6 +178,36 @@ class TetrisEnv:
         self.steps += 1
         return self.get_state(), float(reward), self.done, self._info(cleared)
 
+    def valid_action_mask(self) -> np.ndarray:
+        mask = np.ones(self.action_space_n, dtype=np.bool_)
+        if self.done:
+            return np.zeros(self.action_space_n, dtype=np.bool_)
+        if self.action_mode == "primitive":
+            if self.use_hold:
+                mask[4] = self.can_hold
+            return mask
+
+        mask.fill(False)
+        for action in range(self.width * 4):
+            rotation = action // self.width
+            x = action % self.width
+            piece = Piece(self.current_piece.name, x=x, y=self.current_piece.y, rotation=rotation)
+            mask[action] = self._is_valid(piece)
+        if self.use_hold:
+            mask[-1] = self.can_hold
+        return mask
+
+    def describe_action(self, action: int) -> str:
+        if self.action_mode == "placement":
+            if self.use_hold and action == self.width * 4:
+                return "hold"
+            rotation = action // self.width
+            x = action % self.width
+            return f"rot {rotation}, x {x}"
+        if 0 <= action < len(self.primitive_action_names):
+            return self.primitive_action_names[action]
+        return "-"
+
     def get_state(self) -> np.ndarray:
         heights = np.array(self._column_heights(), dtype=np.float32) / self.height
         aggregate_height = np.array([self._aggregate_height() / (self.width * self.height)], dtype=np.float32)
@@ -171,18 +216,40 @@ class TetrisEnv:
         complete_lines = np.array([self._completed_lines() / self.height], dtype=np.float32)
 
         piece_names = list(TETROMINOES.keys())
-        one_hot = np.zeros(len(piece_names), dtype=np.float32)
-        one_hot[piece_names.index(self.current_piece.name)] = 1.0
+        current_one_hot = np.zeros(len(piece_names), dtype=np.float32)
+        current_one_hot[piece_names.index(self.current_piece.name)] = 1.0
+
+        next_one_hot = np.zeros(len(piece_names), dtype=np.float32)
+        next_one_hot[piece_names.index(self.next_piece_name)] = 1.0
+
+        hold_one_hot = np.zeros(len(piece_names) + 1, dtype=np.float32)
+        if self.hold_piece_name is None:
+            hold_one_hot[-1] = 1.0
+        else:
+            hold_one_hot[piece_names.index(self.hold_piece_name)] = 1.0
 
         pose = np.array(
             [
                 self.current_piece.x / self.width,
                 self.current_piece.y / self.height,
                 self.current_piece.rotation / 3.0,
+                1.0 if self.can_hold else 0.0,
             ],
             dtype=np.float32,
         )
-        return np.concatenate([heights, aggregate_height, holes, bumpiness, complete_lines, one_hot, pose])
+        return np.concatenate(
+            [
+                heights,
+                aggregate_height,
+                holes,
+                bumpiness,
+                complete_lines,
+                current_one_hot,
+                next_one_hot,
+                hold_one_hot,
+                pose,
+            ]
+        )
 
     def render(self, mode: str = "human", cell_size: int = 30):
         import pygame
@@ -254,6 +321,25 @@ class TetrisEnv:
         while self._try_move(0, 1):
             pass
         return self._lock_piece()
+
+    def _step_placement(self, action: Optional[Action]) -> Tuple[int, bool]:
+        if action is None:
+            return self._hard_drop(), False
+        if self.use_hold and action == self.width * 4:
+            if not self.can_hold:
+                return 0, True
+            self._hold()
+            return 0, False
+        if action < 0 or action >= self.width * 4:
+            return 0, True
+
+        rotation = action // self.width
+        x = action % self.width
+        placed = Piece(self.current_piece.name, x=x, y=self.current_piece.y, rotation=rotation)
+        if not self._is_valid(placed):
+            return 0, True
+        self.current_piece = placed
+        return self._hard_drop(), False
 
     def _hold(self) -> None:
         if not self.can_hold:

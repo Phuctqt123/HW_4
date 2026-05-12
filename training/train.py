@@ -16,12 +16,26 @@ from training.replay_buffer import ReplayBuffer
 from utils.plotting import save_training_plots
 
 
-def select_action(model: nn.Module, state: np.ndarray, epsilon: float, action_size: int, device: torch.device) -> int:
-    if random.random() < epsilon:
+def select_action(
+    model: nn.Module,
+    state: np.ndarray,
+    epsilon: float,
+    action_size: int,
+    device: torch.device,
+    valid_mask: np.ndarray | None = None,
+) -> int:
+    valid_actions = np.flatnonzero(valid_mask) if valid_mask is not None else np.arange(action_size)
+    if len(valid_actions) == 0:
         return random.randrange(action_size)
+    if random.random() < epsilon:
+        return int(random.choice(valid_actions))
     with torch.no_grad():
         state_t = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
-        return int(model(state_t).argmax(dim=1).item())
+        q_values = model(state_t).squeeze(0)
+        if valid_mask is not None:
+            mask_t = torch.tensor(valid_mask, dtype=torch.bool, device=device)
+            q_values = q_values.masked_fill(~mask_t, -1e9)
+        return int(q_values.argmax(dim=0).item())
 
 
 def optimize(
@@ -43,14 +57,18 @@ def optimize(
     rewards = torch.tensor(batch.rewards, device=device).unsqueeze(1)
     next_states = torch.tensor(batch.next_states, device=device)
     dones = torch.tensor(batch.dones, device=device).unsqueeze(1)
+    next_valid_masks = torch.tensor(batch.next_valid_masks, dtype=torch.bool, device=device)
 
     q_values = policy_net(states).gather(1, actions)
     with torch.no_grad():
         if double_dqn:
-            next_actions = policy_net(next_states).argmax(dim=1, keepdim=True)
+            next_policy_q = policy_net(next_states).masked_fill(~next_valid_masks, -1e9)
+            next_actions = next_policy_q.argmax(dim=1, keepdim=True)
             next_q_values = target_net(next_states).gather(1, next_actions)
         else:
-            next_q_values = target_net(next_states).max(dim=1, keepdim=True).values
+            next_target_q = target_net(next_states).masked_fill(~next_valid_masks, -1e9)
+            next_q_values = next_target_q.max(dim=1, keepdim=True).values
+        next_q_values = torch.where(next_valid_masks.any(dim=1, keepdim=True), next_q_values, torch.zeros_like(next_q_values))
         targets = rewards + gamma * next_q_values * (1.0 - dones)
 
     loss = nn.SmoothL1Loss()(q_values, targets)
@@ -70,7 +88,7 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
     torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    env = TetrisEnv(use_hold=args.use_hold, seed=args.seed)
+    env = TetrisEnv(use_hold=args.use_hold, action_mode=args.action_mode, seed=args.seed)
     model_cls = DuelingDQN if args.dueling else DQN
     policy_net = model_cls(env.state_size, env.action_space_n).to(device)
     target_net = model_cls(env.state_size, env.action_space_n).to(device)
@@ -93,9 +111,9 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
         episode_losses: List[float] = []
 
         for _ in range(args.max_steps):
-            action = select_action(policy_net, state, epsilon, env.action_space_n, device)
+            action = select_action(policy_net, state, epsilon, env.action_space_n, device, env.valid_action_mask())
             next_state, reward, done, info = env.step(action)
-            replay.push(state, action, reward, next_state, done)
+            replay.push(state, action, reward, next_state, done, env.valid_action_mask())
             loss = optimize(policy_net, target_net, replay, optimizer, args.batch_size, args.gamma, device, args.double_dqn)
             if loss:
                 episode_losses.append(loss)
@@ -123,6 +141,7 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
             "action_size": env.action_space_n,
             "dueling": args.dueling,
             "use_hold": args.use_hold,
+            "action_mode": args.action_mode,
         }
 
         if env.score > best_score:
@@ -153,6 +172,7 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
         "action_size": env.action_space_n,
         "dueling": args.dueling,
         "use_hold": args.use_hold,
+        "action_mode": args.action_mode,
     }
     torch.save(final_checkpoint, Path(args.checkpoint_dir) / "final_model.pt")
     return {"rewards": rewards, "losses": losses, "scores": scores, "epsilons": epsilons}
@@ -177,6 +197,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--use-hold", action="store_true")
+    parser.add_argument("--action-mode", choices=["primitive", "placement"], default="primitive")
     parser.add_argument("--double-dqn", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dueling", action="store_true")
     return parser.parse_args()

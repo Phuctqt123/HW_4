@@ -15,24 +15,34 @@ class Batch:
     rewards: np.ndarray
     next_states: np.ndarray
     dones: np.ndarray
+    next_valid_masks: np.ndarray
 
 
 class ReplayBuffer:
     def __init__(self, capacity: int) -> None:
-        self.memory: Deque[Tuple[np.ndarray, int, float, np.ndarray, bool]] = deque(maxlen=capacity)
+        self.memory: Deque[Tuple[np.ndarray, int, float, np.ndarray, bool, np.ndarray]] = deque(maxlen=capacity)
 
-    def push(self, state: np.ndarray, action: int, reward: float, next_state: np.ndarray, done: bool) -> None:
-        self.memory.append((state, action, reward, next_state, done))
+    def push(
+        self,
+        state: np.ndarray,
+        action: int,
+        reward: float,
+        next_state: np.ndarray,
+        done: bool,
+        next_valid_mask: np.ndarray,
+    ) -> None:
+        self.memory.append((state, action, reward, next_state, done, next_valid_mask))
 
     def sample(self, batch_size: int) -> Batch:
         batch = random.sample(self.memory, batch_size)
-        states, actions, rewards, next_states, dones = map(np.array, zip(*batch))
+        states, actions, rewards, next_states, dones, next_valid_masks = map(np.array, zip(*batch))
         return Batch(
             states=states.astype(np.float32),
             actions=actions.astype(np.int64),
             rewards=rewards.astype(np.float32),
             next_states=next_states.astype(np.float32),
             dones=dones.astype(np.float32),
+            next_valid_masks=next_valid_masks.astype(np.bool_),
         )
 
     def __len__(self) -> int:
