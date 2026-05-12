@@ -208,6 +208,28 @@ class TetrisEnv:
             return self.primitive_action_names[action]
         return "-"
 
+    def heuristic_action(self) -> int:
+        """Pick a strong hand-coded placement action for bootstrapping DQN."""
+        valid_mask = self.valid_action_mask()
+        valid_actions = np.flatnonzero(valid_mask)
+        if len(valid_actions) == 0:
+            return 0
+        if self.action_mode != "placement":
+            return int(valid_actions[0])
+
+        best_action = int(valid_actions[0])
+        best_value = float("-inf")
+        for action in valid_actions:
+            action = int(action)
+            if self.use_hold and action == self.width * 4:
+                value = self._score_hold_heuristic()
+            else:
+                value = self._score_placement_heuristic(action)
+            if value > best_value:
+                best_value = value
+                best_action = action
+        return best_action
+
     def get_state(self) -> np.ndarray:
         heights = np.array(self._column_heights(), dtype=np.float32) / self.height
         aggregate_height = np.array([self._aggregate_height() / (self.width * self.height)], dtype=np.float32)
@@ -340,6 +362,74 @@ class TetrisEnv:
             return 0, True
         self.current_piece = placed
         return self._hard_drop(), False
+
+    def _score_hold_heuristic(self) -> float:
+        snapshot = self._snapshot()
+        try:
+            self._hold()
+            if self.done:
+                return -1_000_000.0
+            placement_actions = [
+                int(action)
+                for action in np.flatnonzero(self.valid_action_mask())
+                if not (self.use_hold and int(action) == self.width * 4)
+            ]
+            if not placement_actions:
+                return -1_000_000.0
+            return max(self._score_placement_heuristic(action) for action in placement_actions) - 0.25
+        finally:
+            self._restore(snapshot)
+
+    def _score_placement_heuristic(self, action: int) -> float:
+        snapshot = self._snapshot()
+        try:
+            cleared, invalid = self._step_placement(action)
+            if invalid or self.done:
+                return -1_000_000.0
+            holes = self._count_holes()
+            bumpiness = self._bumpiness()
+            aggregate_height = self._aggregate_height()
+            complete_lines = self._completed_lines()
+            max_height = max(self._column_heights())
+            return (
+                cleared * 12.0
+                + complete_lines * 2.0
+                - holes * 5.0
+                - bumpiness * 0.8
+                - aggregate_height * 0.45
+                - max_height * 0.35
+            )
+        finally:
+            self._restore(snapshot)
+
+    def _snapshot(self):
+        return (
+            self.board.copy(),
+            Piece(self.current_piece.name, self.current_piece.x, self.current_piece.y, self.current_piece.rotation),
+            self.next_piece_name,
+            self.hold_piece_name,
+            self.can_hold,
+            self.done,
+            self.score,
+            self.lines_cleared,
+            self.steps,
+            self.random.getstate(),
+        )
+
+    def _restore(self, snapshot) -> None:
+        (
+            self.board,
+            self.current_piece,
+            self.next_piece_name,
+            self.hold_piece_name,
+            self.can_hold,
+            self.done,
+            self.score,
+            self.lines_cleared,
+            self.steps,
+            random_state,
+        ) = snapshot
+        self.random.setstate(random_state)
 
     def _hold(self) -> None:
         if not self.can_hold:

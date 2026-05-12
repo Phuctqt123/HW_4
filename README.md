@@ -61,7 +61,21 @@ python -m training.train --episodes 2000 --action-mode placement --dueling --dou
 
 Nên dùng lệnh này cho demo hoặc khi muốn train nhanh.
 
-### 3. Train theo hành động giống người chơi
+### 3. Train kết hợp heuristic + DQN
+
+Đây là cách dễ ra kết quả hơn khi DQN tự học quá khó. Trong giai đoạn đầu, AI thỉnh thoảng sẽ dùng một bộ luật heuristic để chọn nước đặt khối tốt hơn: ưu tiên clear line, giảm lỗ, giảm độ gồ ghề và giữ cột thấp. Sau đó tỷ lệ dùng heuristic giảm dần để model tự quyết nhiều hơn.
+
+```bash
+python -m training.train --episodes 10000 --action-mode placement --dueling --double-dqn --heuristic-guide 0.7 --heuristic-decay 0.9995 --heuristic-end 0.05 --save-every 500 --log-every 50
+```
+
+- `--heuristic-guide 0.7`: lúc đầu có 70% khả năng dùng nước gợi ý từ heuristic.
+- `--heuristic-decay 0.9995`: sau mỗi episode, tỷ lệ dùng heuristic giảm nhẹ.
+- `--heuristic-end 0.05`: vẫn giữ tối thiểu 5% heuristic để hỗ trợ ổn định.
+
+Nếu muốn AI tự học nhiều hơn, giảm `--heuristic-guide` xuống `0.3` hoặc `0.5`. Nếu muốn ra kết quả nhanh hơn cho demo, có thể tăng lên `0.8`.
+
+### 4. Train theo hành động giống người chơi
 
 Lệnh này để AI học bằng các hành động cơ bản như người chơi: sang trái, sang phải, xoay, thả nhanh. Cách này gần với manual play hơn, nhưng học chậm hơn nhiều vì model phải học cả chuỗi hành động để đặt được một khối.
 
@@ -73,7 +87,7 @@ python -m training.train --episodes 5000 --dueling --double-dqn
 - Cần nhiều episode hơn để thấy AI tiến bộ.
 - Phù hợp nếu muốn AI điều khiển game theo từng nút bấm.
 
-### 4. Thêm hold piece
+### 5. Thêm hold piece
 
 Có thể thêm `--use-hold` vào các lệnh train, ví dụ:
 
@@ -89,6 +103,7 @@ python -m training.train --episodes 5000 --action-mode placement --dueling --dou
 | --- | --- | --- |
 | `--episodes 20` | Rất nhanh | Kiểm tra code chạy được |
 | `--action-mode placement --episodes 2000` | Nhanh hơn | Nên dùng để demo/train hiệu quả |
+| Thêm `--heuristic-guide` | Nhanh và ổn hơn | Kết hợp luật chơi với DQN |
 | `--episodes 5000` không placement | Chậm hơn | Học điều khiển như người chơi |
 | Thêm `--use-hold` | Chậm hơn nữa | Cho AI thêm chức năng hold |
 

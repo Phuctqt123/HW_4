@@ -23,10 +23,14 @@ def select_action(
     action_size: int,
     device: torch.device,
     valid_mask: np.ndarray | None = None,
+    guide_action: int | None = None,
+    guide_prob: float = 0.0,
 ) -> int:
     valid_actions = np.flatnonzero(valid_mask) if valid_mask is not None else np.arange(action_size)
     if len(valid_actions) == 0:
         return random.randrange(action_size)
+    if guide_action is not None and random.random() < guide_prob:
+        return int(guide_action)
     if random.random() < epsilon:
         return int(random.choice(valid_actions))
     with torch.no_grad():
@@ -103,6 +107,7 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
     scores: List[float] = []
     epsilons: List[float] = []
     epsilon = args.epsilon_start
+    heuristic_guide = args.heuristic_guide if args.action_mode == "placement" else 0.0
     best_score = -1
 
     for episode in range(1, args.episodes + 1):
@@ -111,7 +116,17 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
         episode_losses: List[float] = []
 
         for _ in range(args.max_steps):
-            action = select_action(policy_net, state, epsilon, env.action_space_n, device, env.valid_action_mask())
+            guide_action = env.heuristic_action() if heuristic_guide > 0.0 else None
+            action = select_action(
+                policy_net,
+                state,
+                epsilon,
+                env.action_space_n,
+                device,
+                env.valid_action_mask(),
+                guide_action,
+                heuristic_guide,
+            )
             next_state, reward, done, info = env.step(action)
             replay.push(state, action, reward, next_state, done, env.valid_action_mask())
             loss = optimize(policy_net, target_net, replay, optimizer, args.batch_size, args.gamma, device, args.double_dqn)
@@ -123,6 +138,7 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
                 break
 
         epsilon = max(args.epsilon_end, epsilon * args.epsilon_decay)
+        heuristic_guide = max(args.heuristic_end, heuristic_guide * args.heuristic_decay)
         rewards.append(episode_reward)
         losses.append(float(np.mean(episode_losses)) if episode_losses else 0.0)
         scores.append(float(env.score))
@@ -142,6 +158,7 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
             "dueling": args.dueling,
             "use_hold": args.use_hold,
             "action_mode": args.action_mode,
+            "heuristic_guide": heuristic_guide,
         }
 
         if env.score > best_score:
@@ -158,7 +175,8 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
             print(
                 f"Episode {episode:5d} | reward {episode_reward:8.2f} | "
                 f"avg_reward {avg_reward:8.2f} | score {env.score:5d} | "
-                f"avg_score {avg_score:7.1f} | epsilon {epsilon:.3f}"
+                f"avg_score {avg_score:7.1f} | epsilon {epsilon:.3f} | "
+                f"guide {heuristic_guide:.3f}"
             )
 
     save_training_plots(rewards, losses, scores, epsilons, args.plot_dir)
@@ -173,6 +191,7 @@ def train(args: argparse.Namespace) -> Dict[str, List[float]]:
         "dueling": args.dueling,
         "use_hold": args.use_hold,
         "action_mode": args.action_mode,
+        "heuristic_guide": heuristic_guide,
     }
     torch.save(final_checkpoint, Path(args.checkpoint_dir) / "final_model.pt")
     return {"rewards": rewards, "losses": losses, "scores": scores, "epsilons": epsilons}
@@ -198,6 +217,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--use-hold", action="store_true")
     parser.add_argument("--action-mode", choices=["primitive", "placement"], default="primitive")
+    parser.add_argument("--heuristic-guide", type=float, default=0.0)
+    parser.add_argument("--heuristic-decay", type=float, default=0.999)
+    parser.add_argument("--heuristic-end", type=float, default=0.0)
     parser.add_argument("--double-dqn", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dueling", action="store_true")
     return parser.parse_args()
