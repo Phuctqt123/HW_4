@@ -115,6 +115,20 @@ Checkpoints được lưu trong `checkpoints/`, và biểu đồ train được 
 python evaluate.py --model checkpoints/best_model.pt --fps 12
 ```
 
+Lệnh trên cho model tự chơi 100%, không dùng heuristic. Nếu muốn chạy kết hợp giống lúc train heuristic, dùng một trong hai cách:
+
+```bash
+python evaluate.py --model checkpoints/best_model.pt --fps 12 --use-checkpoint-guide
+```
+
+Lệnh này lấy tỷ lệ `heuristic_guide` đã lưu trong checkpoint. Nếu muốn tự đặt tỷ lệ, ví dụ 30% heuristic và 70% model:
+
+```bash
+python evaluate.py --model checkpoints/best_model.pt --fps 12 --heuristic-guide 0.3
+```
+
+Khi cửa sổ evaluate chạy, phần `Source` sẽ cho biết nước vừa đi đến từ `model`, `heuristic`, hoặc `random`.
+
 If no model exists yet, the evaluator runs a random policy so you can still verify the environment and renderer.
 
 ## Train trên GPU bên ngoài

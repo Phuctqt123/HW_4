@@ -40,6 +40,12 @@ def evaluate(args: argparse.Namespace) -> None:
     action_size = _checkpoint_action_size(checkpoint) if checkpoint is not None else None
     action_mode = checkpoint.get("action_mode", args.action_mode) if isinstance(checkpoint, dict) else args.action_mode
     use_hold = bool(checkpoint.get("use_hold", args.use_hold)) if isinstance(checkpoint, dict) else args.use_hold
+    checkpoint_guide = float(checkpoint.get("heuristic_guide", 0.0)) if isinstance(checkpoint, dict) else 0.0
+    heuristic_guide = args.heuristic_guide
+    if args.use_checkpoint_guide:
+        heuristic_guide = checkpoint_guide
+    if action_mode != "placement":
+        heuristic_guide = 0.0
     if checkpoint is not None and "action_mode" not in checkpoint and action_size is not None:
         action_mode = "primitive"
         use_hold = action_size == 5
@@ -58,6 +64,7 @@ def evaluate(args: argparse.Namespace) -> None:
     state = env.reset()
     running = True
     action = 0
+    action_source = "random"
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -66,8 +73,12 @@ def evaluate(args: argparse.Namespace) -> None:
                 state = env.reset()
 
         if not env.done:
-            if model is None:
+            if heuristic_guide > 0.0 and env.random.random() < heuristic_guide:
+                action = env.heuristic_action()
+                action_source = "heuristic"
+            elif model is None:
                 action = env.random.randrange(env.action_space_n)
+                action_source = "random"
             else:
                 with torch.no_grad():
                     state_t = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
@@ -75,6 +86,7 @@ def evaluate(args: argparse.Namespace) -> None:
                     valid_mask = torch.tensor(env.valid_action_mask(), dtype=torch.bool, device=device)
                     q_values = q_values.masked_fill(~valid_mask, -1e9)
                     action = int(q_values.argmax(dim=0).item())
+                    action_source = "model"
             state, _, _, info = env.step(action)
         else:
             info = {"score": env.score, "lines": env.lines_cleared, "holes": 0, "bumpiness": 0}
@@ -93,6 +105,8 @@ def evaluate(args: argparse.Namespace) -> None:
             f"Next: {env.next_piece_name}",
             f"Hold: {env.hold_piece_name or '-'}",
             f"Mode: {env.action_mode}",
+            f"Guide: {heuristic_guide:.2f}",
+            f"Source: {action_source}",
             f"Action: {env.describe_action(action) if not env.done else '-'}",
             "",
             "Press R to reset",
@@ -118,6 +132,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--use-hold", action="store_true")
     parser.add_argument("--action-mode", choices=["primitive", "placement"], default="primitive")
+    parser.add_argument("--heuristic-guide", type=float, default=0.0)
+    parser.add_argument("--use-checkpoint-guide", action="store_true")
     return parser.parse_args()
 
 
